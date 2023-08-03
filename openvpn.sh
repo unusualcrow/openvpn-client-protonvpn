@@ -299,6 +299,13 @@ The 'command' (if provided and valid) will be run instead of openvpn
     exit $RC
 }
 
+handle_sigterm() {
+  echo "Received SIGTERM, stopping loop..."
+  stop_loop=true
+}
+
+trap handle_sigterm SIGTERM
+
 dir="/vpn"
 auth="$dir/vpn.auth"
 cert_auth="$dir/vpn.cert_auth"
@@ -378,3 +385,37 @@ else
     exec sg vpn -c "openvpn --cd $dir --config $conf $ext_args \
                ${OTHER_ARGS:-} ${MSS:+--fragment $MSS --mssfix}"
 fi
+
+stop_loop=false
+PORT=${PORT:-51413}
+LOCAL_IP=$(getent hosts transmission | awk '{ print $1 }')
+
+#Make sure VPN is connected
+while : ; do
+    if ip addr show tun0 > /dev/null 2>&1 ; then
+        echo "VPN connection established. Proceeding with NAT-PMP calls..."
+        break
+    else
+        if $stop_loop; then
+            echo "Received SIGTERM before VPN connection could be established, stopping."
+        break
+
+        echo "Waiting for VPN connection..."
+        sleep 2
+    fi
+done
+
+# Handle sigterm for clean shutdown
+while true; do
+  if $stop_loop; then
+    echo "UPNPC loop stopped"
+    break
+  fi
+
+  # Add the port mapping using miniupnpc
+  upnpc -N -a $LOCAL_IP $PORT $PORT TCP 
+  upnpc -N -a $LOCAL_IP $PORT $PORT UDP
+
+  sleep 45
+
+done
